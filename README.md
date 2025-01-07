@@ -1,5 +1,6 @@
 # ComfyUI_pandai
 ComfyUI_pandai Node Usage Guide
+![workflow1](https://github.com/user-attachments/assets/c501bd3f-c905-41d5-8405-8ae82d9ffe80)
 Introduction
 The ComfyUI_pandai node is a custom ComfyUI node designed to interact with the DeepSeek API. It supports text generation, translation, and text polishing. With this node, users can easily generate text, translate content, and refine the generated text for better quality.
 
