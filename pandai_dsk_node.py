@@ -1,6 +1,5 @@
 import json
 from openai import OpenAI
-from langdetect import detect
 
 class Pandai_DSK_Node:
     """
@@ -12,10 +11,16 @@ class Pandai_DSK_Node:
 
     @classmethod
     def INPUT_TYPES(cls):
+        """
+        Define the input fields for the node.
+        """
         return {
             "required": {
-                "api_key": ("STRING", {"multiline": False, "default": "your_api_key_here"}),
-                "model": (["deepseek-chat"],),
+                "api_key": ("STRING", {
+                    "multiline": False,  # Single line input for API key
+                    "default": "your_api_key_here",  # Placeholder for API key
+                }),
+                "model": (["deepseek-chat"],),  # Supported models
                 "max_tokens": ("INT", {"default": 4096, "min": 1, "max": 8192, "step": 1}),
                 "temperature": ("FLOAT", {"default": 1, "min": 0, "max": 2, "step": 0.1}),
                 "top_p": ("FLOAT", {"default": 1, "min": 0, "max": 1, "step": 0.1}),
@@ -23,109 +28,122 @@ class Pandai_DSK_Node:
                 "frequency_penalty": ("FLOAT", {"default": 0, "min": -2, "max": 2, "step": 0.1}),
                 "system_prompt": ("STRING", {"default": "You are a helpful assistant.", "multiline": True}),
                 "user_prompt": ("STRING", {"default": "", "multiline": True}),
-                "enable_translation": (["enable", "disable"], {"default": "disable"}),
-                "enable_polish": (["enable", "disable"], {"default": "disable"}),
+                "enable_translation": (["enable", "disable"], {"default": "disable"}),  # Enable translation
+                "enable_polish": (["enable", "disable"], {"default": "disable"}),  # Enable polish
             },
             "optional": {
-                "history": ("DEEPSEEK_HISTORY",),
+                "history": ("DEEPSEEK_HISTORY",),  # Optional conversation history
             }
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "DEEPSEEK_HISTORY")
-    RETURN_NAMES = ("generated_text", "translated_text", "polished_text", "history")
-    FUNCTION = "run_pandai_dsk"
-    CATEGORY = "Pandai Nodes"
+    RETURN_TYPES = ("STRING", "STRING", "DEEPSEEK_HISTORY")  # Output types: generated_text, polished_text, history
+    RETURN_NAMES = ("generated_text", "polished_text", "history")  # Friendly names for outputs
+    FUNCTION = "run_pandai_dsk"  # Entry-point method
+    CATEGORY = "Pandai Nodes"  # Category in the UI
 
     def run_pandai_dsk(self, api_key, model, max_tokens, temperature, top_p, presence_penalty, frequency_penalty,
                        system_prompt, user_prompt, enable_translation, enable_polish, history=None):
-        # Initialize client
+        """
+        Main function to generate text, translate, and polish using DeepSeek API.
+        """
+        # Initialize OpenAI client with the provided API key
         client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
 
-        # Build messages with proper JSON structure
-        messages = self._build_messages(system_prompt, user_prompt, history)
-        
-        # Generate text
-        generated_text = self._generate_text(client, messages, model, max_tokens, temperature, top_p, 
-                                           presence_penalty, frequency_penalty)
-        
-        # Translation logic
-        translated_text = self._handle_translation(client, generated_text, enable_translation)
-        
-        # Polish logic
-        polished_text = self._handle_polish(client, translated_text, enable_polish)
-        
-        # Update history
-        new_history = self._update_history(messages, generated_text)
-        
-        return (generated_text, translated_text, polished_text, new_history)
-
-    def _build_messages(self, system_prompt, user_prompt, history):
-        """确保消息结构符合API要求"""
-        if history and "messages" in history:
-            messages = history["messages"].copy()
+        # Prepare messages for the API call
+        if history is not None:
+            messages = history["messages"]
         else:
             messages = [{"role": "system", "content": system_prompt}]
-        
-        # 确保user_prompt是合法的content结构
-        messages.append({
-            "role": "user",
-            "content": user_prompt if isinstance(user_prompt, (str, dict)) else str(user_prompt)
-        })
-        return messages
+        messages.append({"role": "user", "content": user_prompt})
 
-    def _generate_text(self, client, messages, model, max_tokens, temperature, top_p, presence_penalty, frequency_penalty):
+        # Step 1: Generate text using DeepSeek API
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+            stream=False
+        )
+        generated_text = response.choices[0].message.content
+        messages.append({"role": "assistant", "content": generated_text})
+
+        # Step 2: Translate the text if enabled
+        translated_text = generated_text
+        if enable_translation == "enable":
+            language = self.detect_language(generated_text)
+            if language == "en":
+                translated_text = self.call_deepseek_api(
+                    client=client,
+                    prompt=f"Translate the following text to Chinese: {generated_text}",
+                    field_name="translated_text"
+                )
+            else:
+                translated_text = self.call_deepseek_api(
+                    client=client,
+                    prompt=f"Translate the following text to English: {generated_text}",
+                    field_name="translated_text"
+                )
+
+        # Step 3: Polish the text if enabled
+        polished_text = translated_text
+        if enable_polish == "enable" and enable_translation == "enable":
+            polished_text = self.polish_text(client, translated_text)
+
+        return (generated_text, polished_text, {"messages": messages})
+
+    def detect_language(self, text):
+        """
+        Detect the language of the input text.
+        """
+        if any("\u4e00" <= char <= "\u9fff" for char in text):
+            return "zh"  # Chinese
+        else:
+            return "en"  # English
+
+    def polish_text(self, client, text):
+        """
+        Expand and polish the text to make it more suitable for Flux model input.
+        """
+        polish_prompt = (
+            f"Expand and polish the following text to make it more suitable for Flux model input. "
+            f"Add details about the scene, such as lighting, textures, colors, and atmosphere. "
+            f"Enhance the description with vivid adjectives and adverbs. "
+            f"Ensure the output is concise and directly related to the input. "
+            f"Do not add unrelated content. Input: {text}"
+        )
+        polished_text = self.call_deepseek_api(
+            client=client,
+            prompt=polish_prompt,
+            field_name="polished_text"
+        )
+        return polished_text
+
+    def call_deepseek_api(self, client, prompt, field_name):
+        """
+        Helper method to call DeepSeek API and handle the response.
+        """
         try:
             response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                presence_penalty=presence_penalty,
-                frequency_penalty=frequency_penalty,
+                model="deepseek-chat",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant"},
+                    {"role": "user", "content": prompt},
+                ],
                 stream=False
             )
             return response.choices[0].message.content
         except Exception as e:
-            raise RuntimeError(f"生成文本失败: {str(e)}")
+            raise Exception(f"API call failed: {e}")
 
-    def _handle_translation(self, client, text, enable_translation):
-        if enable_translation == "disable":
-            return ""
-            
-        src_lang = detect(text)
-        if src_lang == "zh-cn":
-            prompt = f"Translate to English: {text}"
-        else:
-            prompt = f"翻译成中文: {text}"
-            
-        return self._call_api_safely(client, prompt, "translation")
+# Register the node
+NODE_CLASS_MAPPINGS = {
+    "pandai_dsk_node": Pandai_DSK_Node  # 节点名称改为 pandai_dsk_node
+}
 
-    def _handle_polish(self, client, text, enable_polish):
-        if enable_polish == "disable":
-            return ""
-            
-        polish_prompt = (
-            f"Expand and polish this text for Flux model input. "
-            f"Add details about lighting, textures, colors and atmosphere. "
-            f"Enhance with vivid adjectives. Input: {text}"
-        )
-        return self._call_api_safely(client, polish_prompt, "polishing")
-
-    def _call_api_safely(self, client, prompt, operation_name):
-        try:
-            return client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "user", "content": prompt}],
-                stream=False
-            ).choices[0].message.content
-        except Exception as e:
-            print(f"{operation_name}操作失败: {str(e)}")
-            return ""
-
-    def _update_history(self, messages, new_response):
-        messages.append({"role": "assistant", "content": new_response})
-        return {"messages": messages}
-
-NODE_CLASS_MAPPINGS = {"pandai_dsk_node": Pandai_DSK_Node}
-NODE_DISPLAY_NAME_MAPPINGS = {"pandai_dsk_node": "Pandai DSK Node"}
+# Friendly name for the node
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "pandai_dsk_node": "Pandai DSK Node"  # 节点显示名称
+}
