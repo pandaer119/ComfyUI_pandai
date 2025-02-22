@@ -93,7 +93,7 @@ class Pandai_DSK_Node:
         text_output = self._handle_text(client, model, max_tokens, temperature, system_prompt, user_prompt, history)
         json_output = self._process_json(json_input) if json_input else ""
         
-        return (text_output, pil2tensor(Image.new('RGB', (1, 1)) if image is None else image, 
+        return (text_output, pil2tensor(Image.new('RGB', (1, 1))) if image is None else image, 
                 {"messages": []}, json_output)
 
     def _init_client(self, api_key, api_provider):
