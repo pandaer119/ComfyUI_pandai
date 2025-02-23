@@ -1,179 +1,149 @@
 import json
-import requests
-import torch
-import numpy as np
-from PIL import Image
-from io import BytesIO
-from typing import Optional, Dict, Any, List, Tuple
-import uuid
-import time
-from comfy.schema import InputTypes, OutputTypes
-
-# 注册自定义类型
-InputTypes.register("VOLCANO_HISTORY", lambda: OutputTypes.DICT)
-
-def pil2tensor(image: Image.Image) -> torch.Tensor:
-    return torch.from_numpy(np.array(image).astype(np.float32) / 255.0).unsqueeze(0)
-
-class ContentSafetyError(Exception):
-    """内容安全检测异常"""
-    pass
+from openai import OpenAI
 
 class Pandai_DSK_Node:
-    """多模型兼容的超级节点"""
-    
-    VOLCANO_TEXT_API = "https://open.volcengineapi.com/api/v1/llm/chat/completions"
-    VOLCANO_IMAGE_API = "https://open.volcengineapi.com/api/v1/images/generations"
-    DEEPSEEK_R1_API = "https://open.volcengineapi.com/api/v1/deepseek-r1/chat/completions"
-    
+    """
+    A custom ComfyUI node for interacting with DeepSeek API, supporting text generation, translation, and polishing.
+    """
+
     def __init__(self):
-        self.session_history = []
-        self.last_response = None
+        pass
 
     @classmethod
     def INPUT_TYPES(cls):
+        """
+        Define the input fields for the node.
+        """
         return {
             "required": {
-                "api_key": ("STRING", {"default": "volc-your-key-here", "multiline": False}),
-                "model": ([
-                    "volcano-llm-7b", 
-                    "volcano-llm-13b",
-                    "deepseek-r1",
-                    "deepseek-r1-distill"
-                ], {"default": "volcano-llm-7b"}),
-                "mode": (["text_generation", "image_generation"], {"default": "text_generation"}),
-                "max_tokens": ("INT", {"default": 4096, "min": 1, "max": 8192}),
-                "temperature": ("FLOAT", {"default": 1.0, "min": 0, "max": 2}),
-                "system_prompt": ("STRING", {"default": "你是一个专业助手", "multiline": True}),
+                "api_key": ("STRING", {
+                    "multiline": False,  # Single line input for API key
+                    "default": "your_api_key_here",  # Placeholder for API key
+                }),
+                "model": (["deepseek-chat"],),  # Supported models
+                "max_tokens": ("INT", {"default": 4096, "min": 1, "max": 8192, "step": 1}),
+                "temperature": ("FLOAT", {"default": 1, "min": 0, "max": 2, "step": 0.1}),
+                "top_p": ("FLOAT", {"default": 1, "min": 0, "max": 1, "step": 0.1}),
+                "presence_penalty": ("FLOAT", {"default": 0, "min": -2, "max": 2, "step": 0.1}),
+                "frequency_penalty": ("FLOAT", {"default": 0, "min": -2, "max": 2, "step": 0.1}),
+                "system_prompt": ("STRING", {"default": "You are a helpful assistant.", "multiline": True}),
                 "user_prompt": ("STRING", {"default": "", "multiline": True}),
-                "image_width": ("INT", {"default": 1024, "min": 512}),
-                "image_height": ("INT", {"default": 1024, "min": 512})
+                "enable_translation": (["enable", "disable"], {"default": "disable"}),  # Enable translation
+                "enable_polish": (["enable", "disable"], {"default": "disable"}),  # Enable polish
             },
             "optional": {
-                "history": ("VOLCANO_HISTORY",),
-                "model_id_override": ("STRING", {"default": ""})
+                "history": ("DEEPSEEK_HISTORY",),  # Optional conversation history
             }
         }
 
-    RETURN_TYPES = ("STRING", "IMAGE", "VOLCANO_HISTORY", "STRING")
-    RETURN_NAMES = ("text", "image", "history", "raw_json")
-    FUNCTION = "process"
-    CATEGORY = "Pandai Nodes"
+    RETURN_TYPES = ("STRING", "STRING", "DEEPSEEK_HISTORY")  # Output types: generated_text, polished_text, history
+    RETURN_NAMES = ("generated_text", "polished_text", "history")  # Friendly names for outputs
+    FUNCTION = "run_pandai_dsk"  # Entry-point method
+    CATEGORY = "Pandai Nodes"  # Category in the UI
 
-    @torch.no_grad()
-    @torch.inference_mode()
-    def process(self, api_key: str, model: str, mode: str, max_tokens: int, temperature: float,
-                system_prompt: str, user_prompt: str, image_width: int, image_height: int,
-                history: Optional[dict] = None, model_id_override: str = "") -> Tuple[str, torch.Tensor, dict, str]:
-        
-        history = history or {"messages": []}
-        final_model = self._resolve_model(model, model_id_override)
-        
-        if mode == "image_generation":
-            image = self._generate_image(api_key, user_prompt, image_width, image_height)
-            return ("", image, history, "")
-            
-        text, raw_response = self._handle_text(api_key, final_model, max_tokens, temperature, 
-                                             system_prompt, user_prompt, history)
-        return (text, pil2tensor(Image.new('RGB', (1, 1))), history, json.dumps(raw_response))
+    def run_pandai_dsk(self, api_key, model, max_tokens, temperature, top_p, presence_penalty, frequency_penalty,
+                       system_prompt, user_prompt, enable_translation, enable_polish, history=None):
+        """
+        Main function to generate text, translate, and polish using DeepSeek API.
+        """
+        # Initialize OpenAI client with the provided API key
+        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
 
-    def _resolve_model(self, selected_model: str, override_id: str) -> str:
-        if override_id:
-            return override_id
-            
-        model_mapping = {
-            "deepseek-r1": "ep-xxxx-deepseek-r1",
-            "deepseek-r1-distill": "ep-xxxx-deepseek-r1-distill"
-        }
-        return model_mapping.get(selected_model, selected_model)
-
-    def _generate_image(self, api_key: str, prompt: str, width: int, height: int) -> torch.Tensor:
-        try:
-            if not api_key.startswith("volc-"):
-                raise ValueError("无效的火山引擎API Key格式")
-
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "X-Request-ID": str(uuid.uuid4())
-            }
-            
-            response = requests.post(
-                self.VOLCANO_IMAGE_API,
-                headers=headers,
-                json={"prompt": prompt, "size": f"{width}x{height}", "n": 1, "steps": 50},
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                if result.get("code") != 0:
-                    raise ContentSafetyError(result.get("message", "内容安全审核未通过"))
-                
-                image_url = result["data"][0]["url"]
-                for _ in range(3):
-                    try:
-                        image_data = requests.get(image_url, timeout=15).content
-                        return pil2tensor(Image.open(BytesIO(image_data)))
-                    except Exception as e:
-                        print(f"[图像下载重试 {_+1}/3] {str(e)}")
-                        time.sleep(1)
-                raise TimeoutError("图像下载失败")
-            else:
-                raise Exception(f"图像API错误: {response.text}")
-                
-        except ContentSafetyError as e:
-            print(f"[安全拦截] {str(e)}")
-            return pil2tensor(Image.new('RGB', (1, 1)))
-        except Exception as e:
-            print(f"[图像生成失败] {str(e)}")
-            return pil2tensor(Image.new('RGB', (1, 1)))
-
-    def _handle_text(self, api_key: str, model: str, max_tokens: int, temperature: float,
-                    system_prompt: str, user_prompt: str, history: dict) -> Tuple[str, dict]:
-        try:
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "X-Request-ID": str(uuid.uuid4())
-            }
-            
+        # Prepare messages for the API call
+        if history is not None:
+            messages = history["messages"]
+        else:
             messages = [{"role": "system", "content": system_prompt}]
-            messages += history["messages"][-5:] 
-            messages.append({"role": "user", "content": user_prompt})
-            
-            endpoint = self.VOLCANO_TEXT_API
-            if "deepseek" in model.lower():
-                endpoint = self.DEEPSEEK_R1_API
-                headers["X-Volc-Engine"] = "deepseek-r1"
-            
-            payload = {
-                "model": model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "stream": False
-            }
-            
-            response = requests.post(endpoint, headers=headers, json=payload, timeout=15)
-            
-            if response.status_code == 200:
-                result = response.json()
-                if "error" in result:
-                    raise Exception(result["error"]["message"])
-                
-                history["messages"].append({"role": "user", "content": user_prompt})
-                history["messages"].append({"role": "assistant", "content": result["choices"][0]["message"]["content"]})
-                return result["choices"][0]["message"]["content"], result
-            else:
-                error_msg = f"API请求失败: {response.status_code}"
-                if response.text:
-                    error_detail = response.json().get("error", {}).get("message", "")
-                    error_msg += f" | 详细信息: {error_detail}"
-                raise Exception(error_msg)
-                
-        except Exception as e:
-            print(f"[文本生成错误] {str(e)}")
-            return "请求失败，请检查API Key和模型配置", {}
+        messages.append({"role": "user", "content": user_prompt})
 
-NODE_CLASS_MAPPINGS = {"Pandai_DSK": Pandai_DSK_Node}
-NODE_DISPLAY_NAME_MAPPINGS = {"Pandai_DSK": "Pandai 多模型集成节点"}
+        # Step 1: Generate text using DeepSeek API
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+            stream=False
+        )
+        generated_text = response.choices[0].message.content
+        messages.append({"role": "assistant", "content": generated_text})
+
+        # Step 2: Translate the text if enabled
+        translated_text = generated_text
+        if enable_translation == "enable":
+            language = self.detect_language(generated_text)
+            if language == "en":
+                translated_text = self.call_deepseek_api(
+                    client=client,
+                    prompt=f"Translate the following text to Chinese: {generated_text}",
+                    field_name="translated_text"
+                )
+            else:
+                translated_text = self.call_deepseek_api(
+                    client=client,
+                    prompt=f"Translate the following text to English: {generated_text}",
+                    field_name="translated_text"
+                )
+
+        # Step 3: Polish the text if enabled
+        polished_text = translated_text
+        if enable_polish == "enable" and enable_translation == "enable":
+            polished_text = self.polish_text(client, translated_text)
+
+        return (generated_text, polished_text, {"messages": messages})
+
+    def detect_language(self, text):
+        """
+        Detect the language of the input text.
+        """
+        if any("\u4e00" <= char <= "\u9fff" for char in text):
+            return "zh"  # Chinese
+        else:
+            return "en"  # English
+
+    def polish_text(self, client, text):
+        """
+        Expand and polish the text to make it more suitable for Flux model input.
+        """
+        polish_prompt = (
+            f"Expand and polish the following text to make it more suitable for Flux model input. "
+            f"Add details about the scene, such as lighting, textures, colors, and atmosphere. "
+            f"Enhance the description with vivid adjectives and adverbs. "
+            f"Ensure the output is concise and directly related to the input. "
+            f"Do not add unrelated content. Input: {text}"
+        )
+        polished_text = self.call_deepseek_api(
+            client=client,
+            prompt=polish_prompt,
+            field_name="polished_text"
+        )
+        return polished_text
+
+    def call_deepseek_api(self, client, prompt, field_name):
+        """
+        Helper method to call DeepSeek API and handle the response.
+        """
+        try:
+            response = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant"},
+                    {"role": "user", "content": prompt},
+                ],
+                stream=False
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            raise Exception(f"API call failed: {e}")
+
+# Register the node
+NODE_CLASS_MAPPINGS = {
+    "pandai_dsk_node": Pandai_DSK_Node  # 节点名称改为 pandai_dsk_node
+}
+
+# Friendly name for the node
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "pandai_dsk_node": "Pandai DSK Node"  # 节点显示名称
+}
