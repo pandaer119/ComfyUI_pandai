@@ -1,12 +1,11 @@
 # requirements_lock.txt
-openai==1.12.0
-requests==2.31.0
+openai>=1.12.0
+requests>=2.31.0
+Pillow>=10.0.0
 numpy==1.26.0
-volcano-sdk==2.3.1
 python-dotenv==1.0.0
 langdetect==1.0.9
 loguru==0.7.2
-Pillow==10.0.0
 certifi==2023.7.22
 charset-normalizer==3.3.2
 urllib3==1.26.18
