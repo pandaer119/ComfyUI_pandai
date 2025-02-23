@@ -1,14 +1,23 @@
-# ComfyUI_pandai 多协议版
+# ComfyUI_pandai
 
-## 新增特性
-✅ 双协议支持：同时兼容OpenAI官方API和火山引擎DeepSeek-R1接口  
-✅ 智能路由：自动选择响应最快的服务节点  
-✅ 安全签名：符合火山引擎V4签名算法规范  
+![workflow1](https://github.com/user-attachments/assets/c501bd3f-c905-41d5-8405-8ae82d9ffe80)
 
-## 火山引擎专属配置
-```bash
-# 在.env文件中添加
-VOLC_ACCESS_KEY=your_ak_from_console
-VOLC_SECRET_KEY=your_sk_from_console
-MODEL_NAME=deepseek-r1 # 可选r1或r1-turbo
-REGION=cn-north-1 # 必须与控制台区域一致
+## 核心改进说明
+
+1. **JSON结构验证**  
+   - 新增`_build_messages`方法确保消息结构符合API规范
+   - 支持字符串和字典两种content格式
+   - 自动处理历史消息的深拷贝
+
+2. **错误处理优化**  
+   - 所有API调用添加try-catch保护
+   - 分离生成、翻译、润色逻辑到独立方法
+   - 新增安全调用方法`_call_api_safely`
+
+3. **输出改进**  
+   - 明确返回四个输出端口
+   - 新增translated_text独立输出
+   - 优化polish提示词模板
+
+## 安装指南（保持不变）
+（原有安装步骤保持不变，此处省略以节省篇幅）
