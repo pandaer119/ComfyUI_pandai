@@ -1,0 +1,15 @@
+[project]
+name = "pandai"
+description = "Introduction The ComfyUI_pandai node is a custom ComfyUI node designed to interact with the DeepSeek API. It supports text generation, translation, and text polishing. With this node, users can easily generate text, translate content, and refine the generated text for better quality."
+version = "1.0.0"
+license = {file = "LICENSE"}
+dependencies = ["openai>=1.0.0", "langdetect>=1.0.9", "requests>=2.31.0", "loguru>=0.7.0"]
+
+[project.urls]
+Repository = "https://github.com/pandaer119/ComfyUI_pandai"
+#  Used by Comfy Registry https://comfyregistry.org
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "ComfyUI_pandai"
+Icon = ""
