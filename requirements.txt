@@ -1,5 +1,5 @@
+python-docx>=0.8.11
+chardet>=4.0.0
 openai>=1.0.0
 langdetect>=1.0.9
-requests>=2.31.0
-loguru>=0.7.0
-python-dotenv>=0.19.0
+zipfile36>=0.1.3
